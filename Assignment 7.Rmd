@@ -1,0 +1,175 @@
+---
+title: "Assignment 7"
+author: "Jesse Y"
+date: "2025-03-28"
+output:
+  rmdformats::material:
+    highlight: kate
+    number_sections: false
+    self_contained: true
+---
+
+# Introduction
+
+This assignment explores multilevel count data modeling using the Diabetes Health Indicators dataset. Specifically, we model the number of mentally unhealthy days (`ment_hlth`) while accounting for individual characteristics such as high blood pressure, age, and physical activity. We incorporate income level as a grouping variable to investigate whether the effects of predictors vary across income brackets.
+
+We compare standard Poisson and Negative Binomial models to their multilevel counterparts to address potential overdispersion and unobserved heterogeneity across income groups.
+
+# Data Preparation
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+library(tidyverse)
+library(janitor)
+library(lme4)
+library(MASS)
+library(glmmTMB)
+library(ggplot2)
+library(texreg)
+library(broom.mixed)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+# Load and clean data
+diabetes <- read_csv("Diabetes Health Indicators.csv")
+diabetes <- clean_names(diabetes)
+
+# Prepare relevant variables
+diabetes_model <- diabetes %>%
+  dplyr::select(ment_hlth, high_bp, age, phys_activity, income) %>%
+  drop_na() %>%
+  mutate(
+    high_bp = factor(high_bp, labels = c("No", "Yes")),
+    phys_activity = factor(phys_activity, labels = c("No", "Yes")),
+    income = as.factor(income),
+age = as.numeric(age),
+age_z = scale(age)
+  )
+```
+
+Age was standardized to improve model convergence and interpretability of interaction terms in multilevel models.
+
+# Exploratory Data Analysis
+
+## Summary Statistics
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+summary(diabetes_model)
+```
+
+## Outcome Distribution
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+ggplot(diabetes_model, aes(x = ment_hlth)) +
+  geom_histogram(binwidth = 1, fill = "cadetblue") +
+  labs(title = "Distribution of Mentally Unhealthy Days", x = "Days", y = "Frequency") +
+  theme_minimal()
+```
+
+# Baseline Count Models
+
+## Standard Poisson Model
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+poisson_model <- glm(ment_hlth ~ high_bp + age_z + phys_activity,
+                     family = poisson(link = "log"),
+                     data = diabetes_model)
+summary(poisson_model)
+```
+## Overdispersion Test
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+library(AER)
+dispersiontest(poisson_model)
+```
+The significant p-value indicates overdispersion. This justifies using Negative Binomial and multilevel models.
+
+## Negative Binomial Model
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+nb_model <- MASS::glm.nb(ment_hlth ~ high_bp + age_z + phys_activity,
+                         data = diabetes_model)
+summary(nb_model)
+```
+
+# Multilevel Count Models (Grouped by Income)
+
+## Multilevel Poisson Model
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+ml_pois <- glmmTMB(
+  ment_hlth ~ high_bp + age + phys_activity + (1 | income),
+  family = poisson(link = "log"),
+  data = diabetes_model
+)
+summary(ml_pois)
+
+```
+
+## Multilevel Negative Binomial Model
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+ml_nb <- glmmTMB(ment_hlth ~ high_bp + age_z + phys_activity + (1 | income),
+                 family = nbinom2(link = "log"),
+                 data = diabetes_model)
+summary(ml_nb)
+```
+
+# Model Comparison
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+screenreg(list(poisson_model, nb_model, ml_pois, ml_nb),
+          custom.model.names = c("Poisson", "Neg Binomial", "ML Poisson", "ML NB"),
+          caption = "Comparison of Count Models")
+
+```
+
+# Model Fit Comparison (AIC/BIC)
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+AIC(poisson_model, nb_model, ml_pois, ml_nb)
+BIC(poisson_model, nb_model, ml_pois, ml_nb)
+```
+
+# Random Intercepts by Income Group
+
+```{r}
+ranef(ml_nb)$cond$income
+```
+
+# Random Effects Summary
+
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+tidy(ml_nb, effects = "ran_vals") %>%
+  filter(group == "income") %>%
+  ggplot(aes(x = term, y = estimate)) +
+  geom_point() +
+  coord_flip() +
+  labs(title = "Random Intercepts by Income Group",
+       x = "Income Group", y = "Intercept Estimate") +
+  theme_minimal()
+```
+
+The spread of random intercepts across income groups suggests substantial group-level variability, reinforcing the value of a multilevel modeling approach.
+
+
+# Key Findings and Interpretation
+
+- The dispersion test revealed overdispersion, indicating that the Poisson model is not an appropriate fit. This supports the use of the Negative Binomial and multilevel models to better capture variability in the data.
+
+- Physical activity significantly reduces the expected number of mentally unhealthy days across all models.
+
+- High blood pressure increases the number of mentally unhealthy days.
+
+- The multilevel models account for unobserved heterogeneity across income groups and demonstrate better fit through AIC comparisons.
+
+- Given its ability to account for both overdispersion and group-level variation, the multilevel Negative Binomial model offers the most appropriate and reliable fit for the data.
+
+# Implications for Public Health
+
+Multilevel modeling reveals that health-related predictors of mental health vary across income groups, suggesting that interventions should be income-sensitive. Promoting physical activity and managing high blood pressure could be especially important strategies, particularly for low-income groups that may face higher mental health burdens.
+
+# Conclusion
+
+This assignment demonstrated the application of both standard and multilevel count models to a large-scale public health dataset. By addressing overdispersion and incorporating income-level variation, we were able to more accurately model mentally unhealthy days and extract meaningful policy insights.
+
+Overall, accounting for income-level differences using a multilevel framework provided a more nuanced understanding of mental health disparities.
